@@ -139,3 +139,4 @@ RUN python -c "from diffusers import ZImagePipeline; ZImagePipeline.from_pretrai
 | A100 | ~2초 |
 | RTX 4090 | ~3초 |
 | RTX 3090 | ~5초 |
+
