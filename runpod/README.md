@@ -140,3 +140,4 @@ RUN python -c "from diffusers import ZImagePipeline; ZImagePipeline.from_pretrai
 | RTX 4090 | ~3초 |
 | RTX 3090 | ~5초 |
 
+# Build 20260125-141929
