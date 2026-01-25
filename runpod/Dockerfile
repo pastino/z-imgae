@@ -1,5 +1,5 @@
 # Z-Image Turbo RunPod Serverless Dockerfile
-FROM runpod/pytorch:2.5.1-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 # 작업 디렉토리 설정
 WORKDIR /app
