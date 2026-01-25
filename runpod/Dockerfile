@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# PyTorch (이미 베이스 이미지에 포함되어 있음)
-# diffusers 최신 버전 필요 (Z-Image 지원은 최신 버전에만 있음)
+# PyTorch 2.5+ 업그레이드 (enable_gqa 지원 필요)
 RUN pip install --upgrade pip && \
-    pip install git+https://github.com/huggingface/diffusers \
+    pip install torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# diffusers 최신 버전 필요 (Z-Image 지원은 최신 버전에만 있음)
+RUN pip install git+https://github.com/huggingface/diffusers \
     transformers>=4.51.0 \
     safetensors \
     accelerate \
