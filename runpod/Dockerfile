@@ -29,8 +29,13 @@ RUN pip install runpod boto3 requests
 COPY handler.py /app/handler.py
 
 # 모델 사전 다운로드 (콜드 스타트 최적화)
-# 이미지 빌드 시 모델을 미리 다운로드하려면 아래 주석 해제
-# RUN python -c "from diffusers import ZImagePipeline; ZImagePipeline.from_pretrained('Tongyi-MAI/Z-Image-Turbo')"
+ENV HF_HOME=/app/hf_cache
+RUN mkdir -p /app/hf_cache && \
+    python -c "from diffusers import ZImagePipeline; import torch; \
+    print('Z-Image Turbo 모델 다운로드 시작...'); \
+    pipe = ZImagePipeline.from_pretrained('Tongyi-MAI/Z-Image-Turbo', torch_dtype=torch.bfloat16); \
+    print('Z-Image Turbo 모델 다운로드 완료!'); \
+    del pipe"
 
 # 실행
 CMD ["python", "-u", "/app/handler.py"]
