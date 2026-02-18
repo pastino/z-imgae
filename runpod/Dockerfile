@@ -28,13 +28,16 @@ RUN pip install runpod boto3 requests
 # handler 복사
 COPY handler.py /app/handler.py
 
+# requests, Pillow 추가 (img2img 레퍼런스 이미지 다운로드용)
+RUN pip install requests Pillow
+
 # 모델 사전 다운로드 (콜드 스타트 최적화)
 ENV HF_HOME=/app/hf_cache
 RUN mkdir -p /app/hf_cache && \
     python -c "from diffusers import ZImagePipeline; import torch; \
     print('Z-Image Turbo 모델 다운로드 시작...'); \
     pipe = ZImagePipeline.from_pretrained('Tongyi-MAI/Z-Image-Turbo', torch_dtype=torch.bfloat16); \
-    print('Z-Image Turbo 모델 다운로드 완료!'); \
+    print('Z-Image Turbo 모델 다운로드 완료! (txt2img + img2img 컴포넌트 공유)'); \
     del pipe"
 
 # 실행
