@@ -221,7 +221,6 @@ def handler(job):
         width = job_input.get("width", 1024)
         seed = job_input.get("seed")
         num_inference_steps = job_input.get("num_inference_steps", 9)
-        lora_scale = job_input.get("lora_scale", 1.0)
 
         # img2img 파라미터
         ref_image_url = job_input.get("image_url")
@@ -271,7 +270,6 @@ def handler(job):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
                 generator=generator,
-                cross_attention_kwargs={"scale": lora_scale},
             ).images[0]
         else:
             # txt2img 모드: 텍스트 기반 생성
@@ -283,7 +281,6 @@ def handler(job):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
                 generator=generator,
-                cross_attention_kwargs={"scale": lora_scale},
             ).images[0]
 
         print(f"[{mode}] 이미지 생성 완료")

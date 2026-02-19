@@ -33,14 +33,14 @@ RUN pip install requests Pillow
 
 # 모델 + LoRA 사전 다운로드 (콜드 스타트 최적화)
 ENV HF_HOME=/app/hf_cache
+ARG HF_TOKEN=""
 RUN mkdir -p /app/hf_cache && \
-    python -c "from diffusers import ZImagePipeline; import torch; \
-    print('Z-Image Turbo 모델 다운로드 시작...'); \
-    pipe = ZImagePipeline.from_pretrained('Tongyi-MAI/Z-Image-Turbo', torch_dtype=torch.bfloat16); \
-    print('애니메이션 스타일 LoRA 다운로드 시작...'); \
-    pipe.load_lora_weights('reverentelusarca/elusarca-anime-style-lora-z-image-turbo'); \
-    print('Z-Image Turbo + Anime LoRA 다운로드 완료!'); \
-    del pipe"
+    HF_TOKEN=${HF_TOKEN} python -c "from huggingface_hub import snapshot_download; \
+    print('Z-Image Turbo 모델 다운로드...'); \
+    snapshot_download('Tongyi-MAI/Z-Image-Turbo'); \
+    print('애니메이션 스타일 LoRA 다운로드...'); \
+    snapshot_download('reverentelusarca/elusarca-anime-style-lora-z-image-turbo'); \
+    print('다운로드 완료!')"
 
 # 실행
 CMD ["python", "-u", "/app/handler.py"]

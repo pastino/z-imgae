@@ -58,6 +58,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}
 
       # RunPod 자동 배포 - secrets 미설정 시 스킵
       - name: Deploy to RunPod
