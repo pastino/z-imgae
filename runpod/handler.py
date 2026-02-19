@@ -70,6 +70,8 @@ if hf_token:
 # 전역 모델 변수 (콜드 스타트 최적화)
 pipe_txt2img = None
 pipe_img2img = None
+lora_loaded = False  # LoRA 로드 상태 추적
+current_lora_scale = None  # 현재 적용된 LoRA 스케일
 
 # S3 클라이언트 초기화
 s3_client = None
@@ -88,9 +90,9 @@ def get_s3_client():
     return s3_client
 
 
-def get_txt2img_pipe():
+def get_txt2img_pipe(lora_scale: float = 1.2):
     """Z-Image Turbo txt2img 파이프라인 로드 (싱글톤)"""
-    global pipe_txt2img
+    global pipe_txt2img, lora_loaded, current_lora_scale
     if pipe_txt2img is None:
         from diffusers import ZImagePipeline
 
@@ -102,14 +104,23 @@ def get_txt2img_pipe():
         )
         pipe_txt2img.to("cuda")
 
-        # 애니메이션 스타일 LoRA 로드
+        # 애니메이션 스타일 LoRA 로드 + fuse
         try:
             pipe_txt2img.load_lora_weights(
                 "reverentelusarca/elusarca-anime-style-lora-z-image-turbo",
             )
-            print("애니메이션 스타일 LoRA 로드 완료")
+            print(f"[LoRA] 가중치 로드 성공")
+
+            # LoRA를 모델에 병합 (DiT 아키텍처에서 확실한 적용을 위해)
+            pipe_txt2img.fuse_lora(lora_scale=lora_scale)
+            lora_loaded = True
+            current_lora_scale = lora_scale
+            print(f"[LoRA] fuse 완료 (scale={lora_scale})")
         except Exception as e:
-            print(f"LoRA 로드 실패: {e}")
+            import traceback
+            lora_loaded = False
+            print(f"[LoRA] 로드/fuse 실패: {e}")
+            print(traceback.format_exc())
 
         # Flash Attention 활성화 (가능한 경우)
         try:
@@ -118,7 +129,7 @@ def get_txt2img_pipe():
         except Exception as e:
             print(f"Flash Attention 사용 불가: {e}")
 
-        print("Z-Image Turbo + Anime LoRA (txt2img) 모델 로드 완료")
+        print(f"Z-Image Turbo 모델 로드 완료 (LoRA: {'적용됨 scale=' + str(current_lora_scale) if lora_loaded else '미적용'})")
     return pipe_txt2img
 
 
@@ -248,7 +259,10 @@ def handler(job):
         if seed is None:
             seed = torch.randint(0, 2**32, (1,)).item()
 
-        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}")
+        # LoRA 스케일 (요청별 조정 가능, 기본 1.2)
+        lora_scale = job_input.get("lora_scale", 1.2)
+
+        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}, lora_scale={lora_scale}")
 
         # 시드 생성기
         generator = torch.Generator("cuda").manual_seed(seed)
@@ -273,7 +287,7 @@ def handler(job):
             ).images[0]
         else:
             # txt2img 모드: 텍스트 기반 생성
-            model = get_txt2img_pipe()
+            model = get_txt2img_pipe(lora_scale=lora_scale)
             image = model(
                 prompt=prompt,
                 height=height,
@@ -299,6 +313,8 @@ def handler(job):
             "seed": seed,
             "resolution": f"{width}x{height}",
             "mode": mode,
+            "lora_applied": lora_loaded,
+            "lora_scale": current_lora_scale if lora_loaded else None,
         }
 
     except Exception as e:
