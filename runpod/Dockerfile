@@ -31,16 +31,9 @@ COPY handler.py /app/handler.py
 # requests, Pillow 추가 (img2img 레퍼런스 이미지 다운로드용)
 RUN pip install requests Pillow
 
-# 모델 + LoRA 사전 다운로드 (콜드 스타트 최적화)
+# 모델은 런타임에 다운로드 (RunPod 환경변수 HF_TOKEN으로 인증)
 ENV HF_HOME=/app/hf_cache
-ARG HF_TOKEN=""
-RUN mkdir -p /app/hf_cache && \
-    HF_TOKEN=${HF_TOKEN} python -c "from huggingface_hub import snapshot_download; \
-    print('Z-Image Turbo 모델 다운로드...'); \
-    snapshot_download('Tongyi-MAI/Z-Image-Turbo'); \
-    print('애니메이션 스타일 LoRA 다운로드...'); \
-    snapshot_download('reverentelusarca/elusarca-anime-style-lora-z-image-turbo'); \
-    print('다운로드 완료!')"
+RUN mkdir -p /app/hf_cache
 
 # 실행
 CMD ["python", "-u", "/app/handler.py"]
