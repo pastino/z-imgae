@@ -22,8 +22,8 @@ RUN pip install git+https://github.com/huggingface/diffusers \
     loguru \
     pillow
 
-# RunPod SDK, AWS SDK 설치
-RUN pip install runpod boto3 requests
+# RunPod SDK, AWS SDK, PEFT(LoRA 지원) 설치
+RUN pip install runpod boto3 requests peft
 
 # handler 복사
 COPY handler.py /app/handler.py
