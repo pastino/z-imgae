@@ -102,6 +102,15 @@ def get_txt2img_pipe():
         )
         pipe_txt2img.to("cuda")
 
+        # 애니메이션 스타일 LoRA 로드
+        try:
+            pipe_txt2img.load_lora_weights(
+                "reverentelusarca/elusarca-anime-style-lora-z-image-turbo",
+            )
+            print("애니메이션 스타일 LoRA 로드 완료")
+        except Exception as e:
+            print(f"LoRA 로드 실패: {e}")
+
         # Flash Attention 활성화 (가능한 경우)
         try:
             pipe_txt2img.transformer.set_attention_backend("flash")
@@ -109,7 +118,7 @@ def get_txt2img_pipe():
         except Exception as e:
             print(f"Flash Attention 사용 불가: {e}")
 
-        print("Z-Image Turbo (txt2img) 모델 로드 완료")
+        print("Z-Image Turbo + Anime LoRA (txt2img) 모델 로드 완료")
     return pipe_txt2img
 
 
@@ -212,6 +221,7 @@ def handler(job):
         width = job_input.get("width", 1024)
         seed = job_input.get("seed")
         num_inference_steps = job_input.get("num_inference_steps", 9)
+        lora_scale = job_input.get("lora_scale", 1.0)
 
         # img2img 파라미터
         ref_image_url = job_input.get("image_url")
@@ -261,6 +271,7 @@ def handler(job):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
                 generator=generator,
+                cross_attention_kwargs={"scale": lora_scale},
             ).images[0]
         else:
             # txt2img 모드: 텍스트 기반 생성
@@ -272,6 +283,7 @@ def handler(job):
                 num_inference_steps=num_inference_steps,
                 guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
                 generator=generator,
+                cross_attention_kwargs={"scale": lora_scale},
             ).images[0]
 
         print(f"[{mode}] 이미지 생성 완료")
