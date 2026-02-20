@@ -14,11 +14,11 @@ RUN pip install --upgrade pip && \
     pip install torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # diffusers + SDXL 의존성
-RUN pip install diffusers[torch]>=0.30.0 \
-    transformers>=4.40.0 \
+RUN pip install "diffusers[torch]>=0.30.0" \
+    "transformers>=4.44.0" \
     safetensors \
     accelerate \
-    huggingface_hub>=0.25.0 \
+    "huggingface_hub>=0.25.0" \
     pillow \
     xformers
 
