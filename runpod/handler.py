@@ -74,7 +74,7 @@ def get_txt2img_pipe():
     if pipe_txt2img is None:
         from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 
-        model_id = "Liberata/illustrious-xl-v1.0"
+        model_id = "OnomaAIResearch/Illustrious-XL-v2.0"
         print(f"Illustrious XL 모델 로딩 중... ({model_id})")
 
         pipe_txt2img = StableDiffusionXLPipeline.from_pretrained(
@@ -272,7 +272,7 @@ def handler(job):
             "seed": seed,
             "resolution": f"{width}x{height}",
             "mode": mode,
-            "model": "illustrious-xl-v1.0",
+            "model": "illustrious-xl-v2.0",
             "guidance_scale": guidance_scale,
             "num_inference_steps": num_inference_steps,
         }
