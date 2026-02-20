@@ -1,6 +1,8 @@
 """
-Z-Image Turbo RunPod Serverless Handler (S3 연동)
-Version: 2.0.0
+Illustrious XL RunPod Serverless Handler (S3 연동)
+Version: 3.0.0
+
+애니메이션 특화 이미지 생성 (Illustrious XL v1.0)
 
 환경변수 필요:
 - AWS_ACCESS_KEY_ID
@@ -12,36 +14,14 @@ Version: 2.0.0
 API 요청 예시 (txt2img):
 {
     "input": {
-        "prompt": "A beautiful sunset over mountains",
+        "prompt": "1girl, silver hair, blue eyes, fantasy, masterpiece",
+        "negative_prompt": "worst quality, low quality, blurry",
         "height": 1024,
-        "width": 1024,
+        "width": 768,
         "seed": 42,
-        "s3_bucket": "life-vision-dev",
+        "s3_bucket": "glitch-prod",
         "s3_folder": "generated-images"
     }
-}
-
-API 요청 예시 (img2img - 레퍼런스 이미지 기반):
-{
-    "input": {
-        "prompt": "A beautiful sunset over mountains",
-        "image_url": "https://example.com/reference.png",
-        "strength": 0.6,
-        "height": 1024,
-        "width": 1024,
-        "seed": 42,
-        "s3_bucket": "life-vision-dev",
-        "s3_folder": "generated-images"
-    }
-}
-
-응답 예시:
-{
-    "image_url": "https://life-vision-dev.s3.ap-northeast-2.amazonaws.com/generated-images/2025-01-25/abc123.png",
-    "prompt": "A beautiful sunset over mountains",
-    "seed": 42,
-    "resolution": "1024x1024",
-    "mode": "txt2img"
 }
 """
 
@@ -70,8 +50,6 @@ if hf_token:
 # 전역 모델 변수 (콜드 스타트 최적화)
 pipe_txt2img = None
 pipe_img2img = None
-lora_loaded = False  # LoRA 로드 상태 추적
-current_lora_scale = None  # 현재 적용된 LoRA 스케일
 
 # S3 클라이언트 초기화
 s3_client = None
@@ -90,68 +68,61 @@ def get_s3_client():
     return s3_client
 
 
-def get_txt2img_pipe(lora_scale: float = 1.2):
-    """Z-Image Turbo txt2img 파이프라인 로드 (싱글톤)"""
-    global pipe_txt2img, lora_loaded, current_lora_scale
+def get_txt2img_pipe():
+    """Illustrious XL txt2img 파이프라인 로드 (싱글톤)"""
+    global pipe_txt2img
     if pipe_txt2img is None:
-        from diffusers import ZImagePipeline
+        from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 
-        print("Z-Image Turbo (txt2img) 모델 로딩 중...")
-        pipe_txt2img = ZImagePipeline.from_pretrained(
-            "Tongyi-MAI/Z-Image-Turbo",
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=False,
+        model_id = "Liberata/illustrious-xl-v1.0"
+        print(f"Illustrious XL 모델 로딩 중... ({model_id})")
+
+        pipe_txt2img = StableDiffusionXLPipeline.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16,
+            use_safetensors=True,
+            variant="fp16",
         )
+
+        # Euler Ancestral 스케줄러 (Illustrious 권장)
+        pipe_txt2img.scheduler = EulerAncestralDiscreteScheduler.from_config(
+            pipe_txt2img.scheduler.config
+        )
+
         pipe_txt2img.to("cuda")
 
-        # 애니메이션 스타일 LoRA 로드 + fuse
+        # xformers 메모리 최적화 (가능한 경우)
         try:
-            pipe_txt2img.load_lora_weights(
-                "reverentelusarca/elusarca-anime-style-lora-z-image-turbo",
-            )
-            print(f"[LoRA] 가중치 로드 성공")
-
-            # LoRA를 모델에 병합 (DiT 아키텍처에서 확실한 적용을 위해)
-            pipe_txt2img.fuse_lora(lora_scale=lora_scale)
-            lora_loaded = True
-            current_lora_scale = lora_scale
-            print(f"[LoRA] fuse 완료 (scale={lora_scale})")
+            pipe_txt2img.enable_xformers_memory_efficient_attention()
+            print("xformers 메모리 최적화 활성화됨")
         except Exception as e:
-            import traceback
-            lora_loaded = False
-            print(f"[LoRA] 로드/fuse 실패: {e}")
-            print(traceback.format_exc())
+            print(f"xformers 사용 불가 (정상 동작에 영향 없음): {e}")
 
-        # Flash Attention 활성화 (가능한 경우)
-        try:
-            pipe_txt2img.transformer.set_attention_backend("flash")
-            print("Flash Attention 활성화됨")
-        except Exception as e:
-            print(f"Flash Attention 사용 불가: {e}")
-
-        print(f"Z-Image Turbo 모델 로드 완료 (LoRA: {'적용됨 scale=' + str(current_lora_scale) if lora_loaded else '미적용'})")
+        print(f"Illustrious XL 모델 로드 완료")
     return pipe_txt2img
 
 
 def get_img2img_pipe():
-    """Z-Image Turbo img2img 파이프라인 로드 (싱글톤, txt2img 컴포넌트 재활용)"""
+    """Illustrious XL img2img 파이프라인 로드 (싱글톤, txt2img 컴포넌트 재활용)"""
     global pipe_img2img
     if pipe_img2img is None:
-        from diffusers import ZImageImg2ImgPipeline
+        from diffusers import StableDiffusionXLImg2ImgPipeline
 
         # txt2img 파이프라인이 이미 로드되어 있으면 컴포넌트 재활용
         txt2img = get_txt2img_pipe()
 
-        print("Z-Image Turbo (img2img) 파이프라인 구성 중...")
-        pipe_img2img = ZImageImg2ImgPipeline(
-            transformer=txt2img.transformer,
+        print("Illustrious XL (img2img) 파이프라인 구성 중...")
+        pipe_img2img = StableDiffusionXLImg2ImgPipeline(
             vae=txt2img.vae,
             text_encoder=txt2img.text_encoder,
+            text_encoder_2=txt2img.text_encoder_2,
             tokenizer=txt2img.tokenizer,
+            tokenizer_2=txt2img.tokenizer_2,
+            unet=txt2img.unet,
             scheduler=txt2img.scheduler,
         )
 
-        print("Z-Image Turbo (img2img) 파이프라인 준비 완료")
+        print("Illustrious XL (img2img) 파이프라인 준비 완료")
     return pipe_img2img
 
 
@@ -163,14 +134,7 @@ def download_image(url: str) -> Image.Image:
 
 
 def upload_to_s3(image_buffer: BytesIO, bucket: str, folder: str = "generated-images") -> str:
-    """
-    이미지를 S3에 업로드하고 URL 반환
-
-    Args:
-        image_buffer: 이미지 데이터 버퍼
-        bucket: S3 버킷 이름
-        folder: S3 폴더 경로 (기본: generated-images)
-    """
+    """이미지를 S3에 업로드하고 URL 반환"""
     client = get_s3_client()
 
     # 파일명 생성 (폴더/날짜/UUID)
@@ -197,27 +161,22 @@ def upload_to_s3(image_buffer: BytesIO, bucket: str, folder: str = "generated-im
 
 def handler(job):
     """
-    RunPod Serverless Handler
+    RunPod Serverless Handler - Illustrious XL
 
     입력 (공통):
         - prompt: 이미지 생성 프롬프트 (필수)
-        - height: 이미지 높이 (기본: 1024, 16의 배수)
-        - width: 이미지 너비 (기본: 1024, 16의 배수)
+        - negative_prompt: 네거티브 프롬프트 (기본: 품질 관련)
+        - height: 이미지 높이 (기본: 1024, 8의 배수)
+        - width: 이미지 너비 (기본: 768, 8의 배수)
         - seed: 시드값 (기본: 랜덤)
-        - num_inference_steps: 추론 스텝 수 (기본: 9, Turbo는 8-9 권장)
-        - s3_bucket: S3 버킷명 (선택)
-        - s3_folder: S3 폴더 경로 (선택)
+        - num_inference_steps: 추론 스텝 수 (기본: 28)
+        - guidance_scale: CFG 스케일 (기본: 7.0)
+        - s3_bucket: S3 버킷명
+        - s3_folder: S3 폴더 경로
 
-    입력 (img2img 전용 - image_url이 있으면 자동으로 img2img 모드):
+    입력 (img2img 전용):
         - image_url: 레퍼런스 이미지 URL
-        - strength: 변환 강도 (0.0=원본 유지, 1.0=완전 새로 생성, 기본: 0.6)
-
-    출력:
-        - image_url: 생성된 이미지 S3 URL
-        - prompt: 입력 프롬프트
-        - seed: 사용된 시드
-        - resolution: 해상도
-        - mode: "txt2img" 또는 "img2img"
+        - strength: 변환 강도 (기본: 0.6)
     """
     try:
         job_input = job["input"]
@@ -228,10 +187,13 @@ def handler(job):
             return {"error": "prompt 파라미터가 필요합니다."}
 
         # 공통 파라미터
+        negative_prompt = job_input.get("negative_prompt",
+            "worst quality, low quality, blurry, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, watermark, signature, text")
         height = job_input.get("height", 1024)
-        width = job_input.get("width", 1024)
+        width = job_input.get("width", 768)
         seed = job_input.get("seed")
-        num_inference_steps = job_input.get("num_inference_steps", 9)
+        num_inference_steps = job_input.get("num_inference_steps", 28)
+        guidance_scale = job_input.get("guidance_scale", 7.0)
 
         # img2img 파라미터
         ref_image_url = job_input.get("image_url")
@@ -240,13 +202,13 @@ def handler(job):
         # 모드 결정
         mode = "img2img" if ref_image_url else "txt2img"
 
-        # 해상도 검증 (16의 배수여야 함)
-        if height % 16 != 0:
-            height = (height // 16) * 16
-            print(f"height를 16의 배수로 조정: {height}")
-        if width % 16 != 0:
-            width = (width // 16) * 16
-            print(f"width를 16의 배수로 조정: {width}")
+        # 해상도 검증 (8의 배수여야 함)
+        if height % 8 != 0:
+            height = (height // 8) * 8
+            print(f"height를 8의 배수로 조정: {height}")
+        if width % 8 != 0:
+            width = (width // 8) * 8
+            print(f"width를 8의 배수로 조정: {width}")
 
         # S3 설정
         bucket = job_input.get("s3_bucket") or os.environ.get('AWS_S3_BUCKET')
@@ -259,16 +221,12 @@ def handler(job):
         if seed is None:
             seed = torch.randint(0, 2**32, (1,)).item()
 
-        # LoRA 스케일 (요청별 조정 가능, 기본 1.2)
-        lora_scale = job_input.get("lora_scale", 1.2)
-
-        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}, lora_scale={lora_scale}")
+        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}, steps={num_inference_steps}, cfg={guidance_scale}")
 
         # 시드 생성기
         generator = torch.Generator("cuda").manual_seed(seed)
 
         if mode == "img2img":
-            # img2img 모드: 레퍼런스 이미지 기반 생성
             print(f"  레퍼런스 이미지 다운로드: {ref_image_url[:80]}...")
             init_image = download_image(ref_image_url)
             init_image = init_image.resize((width, height))
@@ -277,23 +235,24 @@ def handler(job):
             model = get_img2img_pipe()
             image = model(
                 prompt=prompt,
+                negative_prompt=negative_prompt,
                 image=init_image,
                 strength=strength,
                 height=height,
                 width=width,
                 num_inference_steps=num_inference_steps,
-                guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
+                guidance_scale=guidance_scale,
                 generator=generator,
             ).images[0]
         else:
-            # txt2img 모드: 텍스트 기반 생성
-            model = get_txt2img_pipe(lora_scale=lora_scale)
+            model = get_txt2img_pipe()
             image = model(
                 prompt=prompt,
+                negative_prompt=negative_prompt,
                 height=height,
                 width=width,
                 num_inference_steps=num_inference_steps,
-                guidance_scale=0.0,  # Turbo 모델은 CFG 불필요
+                guidance_scale=guidance_scale,
                 generator=generator,
             ).images[0]
 
@@ -313,8 +272,9 @@ def handler(job):
             "seed": seed,
             "resolution": f"{width}x{height}",
             "mode": mode,
-            "lora_applied": lora_loaded,
-            "lora_scale": current_lora_scale if lora_loaded else None,
+            "model": "illustrious-xl-v1.0",
+            "guidance_scale": guidance_scale,
+            "num_inference_steps": num_inference_steps,
         }
 
     except Exception as e:
