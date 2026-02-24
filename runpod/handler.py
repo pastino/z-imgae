@@ -1,8 +1,6 @@
 """
-Illustrious XL RunPod Serverless Handler (S3 연동)
-Version: 3.0.0
-
-애니메이션 특화 이미지 생성 (Illustrious XL v1.0)
+Z-Image Turbo RunPod Serverless Handler (S3 연동)
+Version: 2.1.0
 
 환경변수 필요:
 - AWS_ACCESS_KEY_ID
@@ -14,14 +12,36 @@ Version: 3.0.0
 API 요청 예시 (txt2img):
 {
     "input": {
-        "prompt": "1girl, silver hair, blue eyes, fantasy, masterpiece",
-        "negative_prompt": "worst quality, low quality, blurry",
+        "prompt": "A beautiful sunset over mountains",
         "height": 1024,
-        "width": 768,
+        "width": 1024,
         "seed": 42,
-        "s3_bucket": "glitch-prod",
+        "s3_bucket": "life-vision-dev",
         "s3_folder": "generated-images"
     }
+}
+
+API 요청 예시 (img2img - 레퍼런스 이미지 기반):
+{
+    "input": {
+        "prompt": "A beautiful sunset over mountains",
+        "image_url": "https://example.com/reference.png",
+        "strength": 0.6,
+        "height": 1024,
+        "width": 1024,
+        "seed": 42,
+        "s3_bucket": "life-vision-dev",
+        "s3_folder": "generated-images"
+    }
+}
+
+응답 예시:
+{
+    "image_url": "https://life-vision-dev.s3.ap-northeast-2.amazonaws.com/generated-images/2025-01-25/abc123.png",
+    "prompt": "A beautiful sunset over mountains",
+    "seed": 42,
+    "resolution": "1024x1024",
+    "mode": "txt2img"
 }
 """
 
@@ -50,6 +70,8 @@ if hf_token:
 # 전역 모델 변수 (콜드 스타트 최적화)
 pipe_txt2img = None
 pipe_img2img = None
+lora_loaded = False
+current_lora_scale = None
 
 # S3 클라이언트 초기화
 s3_client = None
@@ -68,61 +90,66 @@ def get_s3_client():
     return s3_client
 
 
-def get_txt2img_pipe():
-    """Illustrious XL txt2img 파이프라인 로드 (싱글톤)"""
-    global pipe_txt2img
+def get_txt2img_pipe(lora_scale: float = 1.2):
+    """Z-Image Turbo txt2img 파이프라인 로드 (싱글톤)"""
+    global pipe_txt2img, lora_loaded, current_lora_scale
     if pipe_txt2img is None:
-        from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
+        from diffusers import ZImagePipeline
 
-        model_id = "OnomaAIResearch/Illustrious-XL-v2.0"
-        print(f"Illustrious XL 모델 로딩 중... ({model_id})")
-
-        pipe_txt2img = StableDiffusionXLPipeline.from_pretrained(
-            model_id,
-            torch_dtype=torch.float16,
-            use_safetensors=True,
-            variant="fp16",
+        print("Z-Image Turbo (txt2img) 모델 로딩 중...")
+        pipe_txt2img = ZImagePipeline.from_pretrained(
+            "Tongyi-MAI/Z-Image-Turbo",
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=False,
         )
-
-        # Euler Ancestral 스케줄러 (Illustrious 권장)
-        pipe_txt2img.scheduler = EulerAncestralDiscreteScheduler.from_config(
-            pipe_txt2img.scheduler.config
-        )
-
         pipe_txt2img.to("cuda")
 
-        # xformers 메모리 최적화 (가능한 경우)
+        # 애니메이션 스타일 LoRA 로드 + fuse
         try:
-            pipe_txt2img.enable_xformers_memory_efficient_attention()
-            print("xformers 메모리 최적화 활성화됨")
-        except Exception as e:
-            print(f"xformers 사용 불가 (정상 동작에 영향 없음): {e}")
+            pipe_txt2img.load_lora_weights(
+                "reverentelusarca/elusarca-anime-style-lora-z-image-turbo",
+            )
+            print(f"[LoRA] 가중치 로드 성공")
 
-        print(f"Illustrious XL 모델 로드 완료")
+            pipe_txt2img.fuse_lora(lora_scale=lora_scale)
+            lora_loaded = True
+            current_lora_scale = lora_scale
+            print(f"[LoRA] fuse 완료 (scale={lora_scale})")
+        except Exception as e:
+            import traceback
+            lora_loaded = False
+            print(f"[LoRA] 로드/fuse 실패: {e}")
+            print(traceback.format_exc())
+
+        # Flash Attention 활성화 (가능한 경우)
+        try:
+            pipe_txt2img.transformer.set_attention_backend("flash")
+            print("Flash Attention 활성화됨")
+        except Exception as e:
+            print(f"Flash Attention 사용 불가: {e}")
+
+        print(f"Z-Image Turbo 모델 로드 완료 (LoRA: {'적용됨 scale=' + str(current_lora_scale) if lora_loaded else '미적용'})")
     return pipe_txt2img
 
 
 def get_img2img_pipe():
-    """Illustrious XL img2img 파이프라인 로드 (싱글톤, txt2img 컴포넌트 재활용)"""
+    """Z-Image Turbo img2img 파이프라인 로드 (싱글톤, txt2img 컴포넌트 재활용)"""
     global pipe_img2img
     if pipe_img2img is None:
-        from diffusers import StableDiffusionXLImg2ImgPipeline
+        from diffusers import ZImageImg2ImgPipeline
 
-        # txt2img 파이프라인이 이미 로드되어 있으면 컴포넌트 재활용
         txt2img = get_txt2img_pipe()
 
-        print("Illustrious XL (img2img) 파이프라인 구성 중...")
-        pipe_img2img = StableDiffusionXLImg2ImgPipeline(
+        print("Z-Image Turbo (img2img) 파이프라인 구성 중...")
+        pipe_img2img = ZImageImg2ImgPipeline(
+            transformer=txt2img.transformer,
             vae=txt2img.vae,
             text_encoder=txt2img.text_encoder,
-            text_encoder_2=txt2img.text_encoder_2,
             tokenizer=txt2img.tokenizer,
-            tokenizer_2=txt2img.tokenizer_2,
-            unet=txt2img.unet,
             scheduler=txt2img.scheduler,
         )
 
-        print("Illustrious XL (img2img) 파이프라인 준비 완료")
+        print("Z-Image Turbo (img2img) 파이프라인 준비 완료")
     return pipe_img2img
 
 
@@ -137,11 +164,9 @@ def upload_to_s3(image_buffer: BytesIO, bucket: str, folder: str = "generated-im
     """이미지를 S3에 업로드하고 URL 반환"""
     client = get_s3_client()
 
-    # 파일명 생성 (폴더/날짜/UUID)
     today = datetime.now().strftime("%Y-%m-%d")
     filename = f"{folder}/{today}/{uuid.uuid4().hex}.png"
 
-    # S3 업로드
     image_buffer.seek(0)
     client.upload_fileobj(
         image_buffer,
@@ -150,7 +175,6 @@ def upload_to_s3(image_buffer: BytesIO, bucket: str, folder: str = "generated-im
         ExtraArgs={'ContentType': 'image/png'}
     )
 
-    # URL 생성
     region = os.environ.get('AWS_REGION', 'ap-northeast-2')
     url = f"https://{bucket}.s3.{region}.amazonaws.com/{filename}"
 
@@ -161,16 +185,14 @@ def upload_to_s3(image_buffer: BytesIO, bucket: str, folder: str = "generated-im
 
 def handler(job):
     """
-    RunPod Serverless Handler - Illustrious XL
+    RunPod Serverless Handler - Z-Image Turbo
 
     입력 (공통):
         - prompt: 이미지 생성 프롬프트 (필수)
-        - negative_prompt: 네거티브 프롬프트 (기본: 품질 관련)
-        - height: 이미지 높이 (기본: 1024, 8의 배수)
-        - width: 이미지 너비 (기본: 768, 8의 배수)
+        - height: 이미지 높이 (기본: 1024, 16의 배수)
+        - width: 이미지 너비 (기본: 1024, 16의 배수)
         - seed: 시드값 (기본: 랜덤)
-        - num_inference_steps: 추론 스텝 수 (기본: 28)
-        - guidance_scale: CFG 스케일 (기본: 7.0)
+        - num_inference_steps: 추론 스텝 수 (기본: 9, Turbo는 8-9 권장)
         - s3_bucket: S3 버킷명
         - s3_folder: S3 폴더 경로
 
@@ -187,13 +209,10 @@ def handler(job):
             return {"error": "prompt 파라미터가 필요합니다."}
 
         # 공통 파라미터
-        negative_prompt = job_input.get("negative_prompt",
-            "worst quality, low quality, blurry, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, watermark, signature, text")
         height = job_input.get("height", 1024)
-        width = job_input.get("width", 768)
+        width = job_input.get("width", 1024)
         seed = job_input.get("seed")
-        num_inference_steps = job_input.get("num_inference_steps", 28)
-        guidance_scale = job_input.get("guidance_scale", 7.0)
+        num_inference_steps = job_input.get("num_inference_steps", 9)
 
         # img2img 파라미터
         ref_image_url = job_input.get("image_url")
@@ -202,13 +221,13 @@ def handler(job):
         # 모드 결정
         mode = "img2img" if ref_image_url else "txt2img"
 
-        # 해상도 검증 (8의 배수여야 함)
-        if height % 8 != 0:
-            height = (height // 8) * 8
-            print(f"height를 8의 배수로 조정: {height}")
-        if width % 8 != 0:
-            width = (width // 8) * 8
-            print(f"width를 8의 배수로 조정: {width}")
+        # 해상도 검증 (16의 배수여야 함)
+        if height % 16 != 0:
+            height = (height // 16) * 16
+            print(f"height를 16의 배수로 조정: {height}")
+        if width % 16 != 0:
+            width = (width // 16) * 16
+            print(f"width를 16의 배수로 조정: {width}")
 
         # S3 설정
         bucket = job_input.get("s3_bucket") or os.environ.get('AWS_S3_BUCKET')
@@ -221,7 +240,10 @@ def handler(job):
         if seed is None:
             seed = torch.randint(0, 2**32, (1,)).item()
 
-        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}, steps={num_inference_steps}, cfg={guidance_scale}")
+        # LoRA 스케일 (요청별 조정 가능, 기본 1.2)
+        lora_scale = job_input.get("lora_scale", 1.2)
+
+        print(f"[{mode}] 이미지 생성 시작: prompt='{prompt[:50]}...', {width}x{height}, seed={seed}, lora_scale={lora_scale}")
 
         # 시드 생성기
         generator = torch.Generator("cuda").manual_seed(seed)
@@ -235,24 +257,22 @@ def handler(job):
             model = get_img2img_pipe()
             image = model(
                 prompt=prompt,
-                negative_prompt=negative_prompt,
                 image=init_image,
                 strength=strength,
                 height=height,
                 width=width,
                 num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
+                guidance_scale=0.0,
                 generator=generator,
             ).images[0]
         else:
-            model = get_txt2img_pipe()
+            model = get_txt2img_pipe(lora_scale=lora_scale)
             image = model(
                 prompt=prompt,
-                negative_prompt=negative_prompt,
                 height=height,
                 width=width,
                 num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
+                guidance_scale=0.0,
                 generator=generator,
             ).images[0]
 
@@ -272,9 +292,9 @@ def handler(job):
             "seed": seed,
             "resolution": f"{width}x{height}",
             "mode": mode,
-            "model": "illustrious-xl-v2.0",
-            "guidance_scale": guidance_scale,
-            "num_inference_steps": num_inference_steps,
+            "model": "z-image-turbo",
+            "lora_applied": lora_loaded,
+            "lora_scale": current_lora_scale if lora_loaded else None,
         }
 
     except Exception as e:
